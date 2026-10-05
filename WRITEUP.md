@@ -1,76 +1,37 @@
-# Seat Reservation System at Scale
+# Assignment write-up
 
-## 1. Atomic Decision & Concurrency
-The core requirement is to never double-sell a seat under high concurrency.
-A "read-then-write" approach leads to race conditions. Instead, this system uses a **conditional update guarded on current state**.
+## Atomic decision and lock order
 
-When reserving seats, the system runs:
-```sql
-UPDATE seats 
-SET status = 'confirmed', user_id = $1, reservation_id = $2
-WHERE show_id = $3 AND name = ANY($4) AND status = 'available'
-RETURNING name;
-```
-Because PostgreSQL uses row-level locks on `UPDATE`, multiple concurrent updates targeting the same hot seat will queue up sequentially in the database engine. The first one to execute changes the state to `confirmed`. Subsequent queued updates will then fail to find rows matching `status = 'available'` and return 0 rows, prompting the Go application to gracefully decline the request with a `409 Conflict` (Seat taken).
+The seat claim is one PostgreSQL transaction. It first locks the `(show_id, user_id)` quota row through an `INSERT ... ON CONFLICT DO UPDATE ... WHERE seats_booked + requested <= 4`. PostgreSQL's unique-key conflict handling serializes concurrent updates to that quota row, so two requests from one user cannot both pass the four-seat limit based on a stale read.
 
-**Deadlock Avoidance**: For multi-seat requests, we avoid deadlocks by performing a single bulk `UPDATE ... WHERE name = ANY(...)` rather than issuing separate individual updates. Postgres processes this internally as a single atomic operation, locking the rows safely.
+For the inventory decision, the service runs `SELECT ... WHERE status = 'available' ORDER BY name FOR UPDATE`, checks that it locked every requested seat, then updates those locked rows to `held` and commits. The final update is also conditional on `status = 'available'` and returns the changed rows. Under PostgreSQL `READ COMMITTED`, a competing updater waits for the row lock and rechecks the predicate against the committed row; only one transaction can transition a given seat from available to held. If any requested seat is absent or no longer available, the transaction rolls back, including its quota increment.
 
-## 2. Idempotency & Per-User Limits
-### Idempotency
-The idempotency key is stored in a dedicated `idempotency_keys` PostgreSQL table with a `UNIQUE` constraint on the key. 
-- The system attempts an `INSERT ... ON CONFLICT DO NOTHING`.
-- If the insert succeeds, it's a new request and proceeds to book.
-- If no rows are affected (conflict), it's a replay. It fetches the saved request body and does a logical JSON comparison against the incoming body.
-- **Same key, different body**: Rejected with `409 Conflict`.
-- **Same key, same body**: Returns the original `reservation_id` along with its *actual, current status* in the database (e.g., if you successfully booked it but then cancelled it, a replay will tell you it is now `cancelled`).
+Multi-seat requests lock seat rows in lexical seat-name order, regardless of the caller's input order. Reservation, cancellation, and expiry take the user's quota row before locking seats; expiry walks `(show_id, user_id)` groups in database order. Confirmation only locks and changes seat rows and never waits for a quota row. This gives competing seat-changing transactions a consistent quota-before-seat order and a consistent order among multiple seat rows, avoiding a cycle where transactions hold different requested seats while waiting on each other.
 
-### Per-User Limit (Concurrency-Safe)
-To enforce the 4-seat limit concurrently without suffering from phantom reads, the system uses an Upsert into a `user_show_limits` table:
-```sql
-INSERT INTO user_show_limits (show_id, user_id, seats_booked) VALUES ($1, $2, $3)
-ON CONFLICT (show_id, user_id) DO UPDATE 
-SET seats_booked = user_show_limits.seats_booked + EXCLUDED.seats_booked
-WHERE user_show_limits.seats_booked + EXCLUDED.seats_booked <= 4
-RETURNING seats_booked;
-```
-If the limit is exceeded, the `WHERE` condition fails, returning 0 rows (`pgx.ErrNoRows`), allowing us to atomic decline with `409 Conflict`.
+## Idempotency
 
-## 3. Holds & Expiry
-This system implements the **explicit cancellation** model (POST `/reservations/{id}/cancel`). Only the original owner (identified by `X-User-ID`) can cancel the reservation. Canceling cleanly wipes the `reservation_id` and `user_id` from the seats, returns them to `available`, and decrements the user's quota in `user_show_limits`.
+`idempotency_keys` stores the key as its primary key, plus the show ID, user ID, JSONB request, reservation ID, and original integer-paise amount. The key insert, quota increment, seat hold, and stored response amount commit in the same transaction. A failed or partial reservation rolls all of them back. A concurrent retry waits on the unique key; after the first transaction commits, it reads and returns the original reservation result rather than creating another hold.
 
-## 4. Consistency vs Availability under a Partition
-The system relies on a single relational database (PostgreSQL) as the sole source of truth, choosing **Consistency (C)** over Availability (A) in the CAP theorem. If the database is unreachable, the API's readiness check (`/readyz`) fails, and the system fails closed (503 Service Unavailable). This is strictly required for financial/ticketing systems where over-selling or phantom inventory is absolutely unacceptable.
+Replay comparison binds the key to the same show, user, and seat set (seat order is immaterial). Reusing a key for another user, show, or seat set returns 409. A valid replay returns the original 201 response values, including the original hold status and amount. Keys are retained indefinitely in this version. The user ID is trusted from `X-User-ID`; production authentication and ownership identity must be supplied by a trusted gateway.
 
-## 5. Observability
-Structured logs are generated per request, injected with unique Request IDs for correlation.
-Prometheus metrics are exposed at `/metrics`:
-- `reservations_confirmed_total` (counter)
-- `reservations_declined_total` (counter, partitioned by reason: `seat_taken`, `per_user_limit`, `idempotent_replay`)
-- `seats_available` (gauge)
+## Holds and expiry
 
-**2 AM Pages**: I would want to be paged for:
-- Elevated `5xx` error rates (indicates database unreachable or application panics).
-- Anomaly in `seats_available` gauge (if it drops below 0, or if `available + confirmed != total`).
-- Latency spikes (p99 > 500ms) which could indicate database lock contention.
+A successful reservation starts in `held`. It can be confirmed by its owner before expiry. A worker checks for holds older than 15 minutes every 30 seconds, then in one transaction locks each affected user's quota and the matching seat rows, returns the still-expired seats to available, and decrements quota by the number of seats actually released. If a concurrent confirmation or cancellation wins the seat lock, the expiry query rechecks the status and does not decrement quota for seats it did not release. Cancellation supports both held and confirmed reservations.
 
-## 6. AI Usage
-AI (Gemini 3.1 Pro) was used collaboratively via an agentic IDE. 
-- **Directed**: I commanded the AI to build an API using Go and PostgreSQL.
-- **Decided**: The AI autonomously selected the specific SQL mechanisms (like `ON CONFLICT DO UPDATE ... WHERE` for the limit check, and `ON CONFLICT DO NOTHING` to fix transaction abort states on idempotency conflicts) to ensure absolute correctness under load. The AI also wrote the concurrent burst testing script and Prometheus middleware.
+## Consistency under a partition
 
-## 7. What's Next
-- Move holds to a time-boxed TTL model (e.g., reserving changes status to `held`, and a background worker clears it back to `available` if payment is not confirmed within 10 minutes).
-- Implement database connection pooling limits optimized for the specific hardware to prevent connection exhaustion.
-- Add comprehensive unit testing for edge cases.
+PostgreSQL is the single source of truth; there is no inventory cache or write-behind path. If the service cannot reach PostgreSQL, readiness returns 503 and reservation operations cannot commit. The service gives up write availability during that failure rather than accepting reservations against stale inventory. The API is designed for one writable PostgreSQL primary; it does not implement multi-region failover.
 
-## Running the Burst Test
-```bash
-# Make sure the script is executable
-chmod +x burst.sh
+## Observability and paging
 
-# Run against local
-./burst.sh http://localhost:8080
+Access logs go to stdout and include a generated request ID, HTTP status, latency, method, path, and error. Prometheus is exposed at `/metrics`; it has request count and duration by route, held/confirmed/declined/replay counters, an available-seat gauge refreshed from PostgreSQL every 15 seconds, and hold-reaper failure and last-success metrics.
 
-# Run against production
-./burst.sh https://your-production-url.com
-```
+At 2am I would page on sustained readiness failures or database connection failures, a sharp increase in 5xx responses, p99 latency above the service objective, an increasing `hold_reaper_failures_total` or stale `hold_reaper_last_success_timestamp_seconds`, and a database reconciliation showing `available + held + confirmed != total_seats` or a negative quota. I would investigate a surge in 409 conflicts as a possible demand spike, but would not page on expected seat contention by itself.
+
+## AI usage
+
+This deployment-readiness pass used OpenAI Codex to review the transaction and deployment paths, update the implementation and documentation, and prepare build/run instructions. I directed the work toward deploy readiness and the assignment's stated guarantees. Codex identified the need for deterministic multi-seat locks and user/show-bound idempotency, and proposed the implementation details now in the service. The repository's earlier write-up recorded Gemini 3.1 Pro assistance for the initial API, concurrency, and metrics work; this checkout contains only one baseline commit, so it does not provide a commit-by-commit record of that earlier collaboration.
+
+## What I would do next
+
+Add database-backed integration tests for same-seat races, opposite-order multi-seat requests, duplicate idempotency requests, same-key body mismatch, expiry racing confirm/cancel, and quota reconciliation. Add schema migrations and a supported retention policy for idempotency records. Replace the assignment's `X-User-ID` header convention with authenticated identity, add rate limits, and run the service behind TLS. Establish production alert thresholds from load data and make database backups and restore drills part of deployment operations.
