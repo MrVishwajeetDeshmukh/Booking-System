@@ -16,7 +16,7 @@ import (
 func main() {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://postgres:123456789@localhost:5432/bookings?sslmode=disable"
+		dbURL = "postgres://postgres:development-only@localhost:5432/bookings?sslmode=disable"
 	}
 
 	ctx := context.Background()
@@ -28,7 +28,10 @@ func main() {
 
 	app := fiber.New()
 	app.Use(requestid.New())
-	app.Use(logger.New())
+	app.Use(logger.New(logger.Config{
+		Format:   "${time} request_id=${locals:requestid} status=${status} latency=${latency} method=${method} path=${path} error=${error}\n",
+		TimeZone: "UTC",
+	}))
 	app.Use(recover.New())
 
 	routes.SetupRoutes(app, db)
@@ -38,5 +41,7 @@ func main() {
 		port = "8080"
 	}
 	log.Printf("Starting server on port %s", port)
-	app.Listen(":" + port)
+	if err := app.Listen(":" + port); err != nil {
+		log.Fatalf("Unable to serve HTTP: %v", err)
+	}
 }

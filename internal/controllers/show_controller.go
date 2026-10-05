@@ -4,6 +4,7 @@ import (
 	"bookingsystem/internal/models"
 	"bookingsystem/internal/services"
 	"github.com/gofiber/fiber/v2"
+	"strings"
 )
 
 type ShowController struct {
@@ -29,6 +30,9 @@ func (c *ShowController) HandleCreateShow(ctx *fiber.Ctx) error {
 	var req models.ShowRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return ctx.Status(fiber.StatusBadRequest).SendString(err.Error())
+	}
+	if strings.TrimSpace(req.Name) == "" || len(req.Seats) == 0 || req.PricePaise < 0 {
+		return ctx.Status(fiber.StatusBadRequest).SendString("Name, at least one seat, and a non-negative price_paise are required")
 	}
 
 	showID, err := c.svc.CreateShow(ctx.Context(), req)
@@ -98,7 +102,7 @@ func (c *ShowController) HandleReserve(ctx *fiber.Ctx) error {
 		"reservation_id": res.ReservationID,
 		"show_id":        showID,
 		"user_id":        userID,
-		"seats":          req.Seats,
+		"seats":          res.Seats,
 		"amount_paise":   res.AmountPaise,
 		"status":         res.Status,
 	})
