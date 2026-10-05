@@ -32,7 +32,7 @@ At 2am I would page on sustained readiness failures or database connection failu
 
 ## AI usage
 
-The repository's original write-up records Gemini 3.1 Pro assistance on the initial API, concurrency, and metrics work. In this deployment-readiness pass, I used OpenAI Codex to review and change the transaction paths, add signed-token identity, build the hot-seat/idempotency/per-user burst program, and prepare the container and operations docs. I directed the work toward the assignment checks; Codex identified and proposed the deterministic locking, token verification, and burst scenarios. I reviewed the resulting code and build output. The checkout originally contained one baseline commit; four follow-up commits record this pass incrementally, but cannot reconstruct the earlier development history.
+The repository's original write-up records Gemini 3.1 Pro assistance on the initial API, concurrency, and metrics work. In this deployment-readiness pass, I used OpenAI Codex to review and change the transaction paths, add signed-token identity, build the hot-seat/idempotency/per-user burst program, and prepare the container and operations docs. I directed the work toward the assignment checks; Codex identified and proposed the deterministic locking, token verification, and burst scenarios. I reviewed the resulting code and build output. The checkout originally contained one baseline commit; the follow-up commits record this pass incrementally, but cannot reconstruct the earlier development history.
 
 ## What I would do next
 

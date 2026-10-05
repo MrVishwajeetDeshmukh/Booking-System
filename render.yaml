@@ -16,13 +16,3 @@ services:
           property: connectionString
       - key: AUTH_TOKEN_SECRET
         generateValue: true
-
-databases:
-  - name: seat-booking-db
-    databaseName: seat_booking_db_e8s2
-    user: seat_booking_db_e8s2_user
-    postgresMajorVersion: "15"
-    plan: free
-    region: singapore
-    ipAllowList: []
-    connectionPool: none
