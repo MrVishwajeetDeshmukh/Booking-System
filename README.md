@@ -30,6 +30,10 @@ This Blueprint uses Render's free web and database plans for assignment review. 
 
 ## API quick start
 
+### Postman
+
+Import [`postman/Booking-System.postman_collection.json`](postman/Booking-System.postman_collection.json) into Postman and run the collection in order. It checks liveness, readiness, and metrics, registers a user, creates a sample show, reserves a seat, replays the same idempotency key, verifies that reusing that key with a different body returns `409`, then confirms and cancels the reservation. The default `base_url` collection variable points to the deployed service; change it to `http://localhost:8080` to use the local stack. The collection creates a fresh show and idempotency key on each run.
+
 Create a show and note the returned `id`:
 
 ```sh
