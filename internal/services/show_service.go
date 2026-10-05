@@ -61,8 +61,6 @@ func (s *ShowService) CreateShow(ctx context.Context, req models.ShowRequest) (s
 		return "", err
 	}
 
-	metrics.SeatsAvailable.WithLabelValues(showID.String()).Set(float64(len(req.Seats)))
-
 	return showID.String(), nil
 }
 
@@ -88,51 +86,6 @@ func (s *ShowService) GetShow(ctx context.Context, showID string) (map[string]in
 	}
 
 	return counts, seats, nil
-}
-
-func (s *ShowService) RefreshAvailableSeatMetrics(ctx context.Context) error {
-	rows, err := s.db.Query(ctx, `
-		SELECT shows.id::text, COUNT(seats.name) FILTER (WHERE seats.status = 'available')
-		FROM shows
-		LEFT JOIN seats ON seats.show_id = shows.id
-		GROUP BY shows.id
-	`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var showID string
-		var available int
-		if err := rows.Scan(&showID, &available); err != nil {
-			return err
-		}
-		metrics.SeatsAvailable.WithLabelValues(showID).Set(float64(available))
-	}
-	return rows.Err()
-}
-
-func (s *ShowService) StartMetricsRefresh(ctx context.Context) {
-	ticker := time.NewTicker(15 * time.Second)
-	go func() {
-		defer ticker.Stop()
-		refresh := func() {
-			refreshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-			if err := s.RefreshAvailableSeatMetrics(refreshCtx); err != nil {
-				log.Printf("Metrics: failed to refresh available seats: %v", err)
-			}
-		}
-		refresh()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				refresh()
-			}
-		}
-	}()
 }
 
 type ReserveResult struct {
@@ -200,7 +153,7 @@ func (s *ShowService) ReserveSeats(ctx context.Context, showID, userID, idempote
 		different := existingShowID.String() != showID || existingUserID != userID || !sameSeatSet(existingReq.Seats, req.Seats)
 
 		if different {
-			metrics.ReservationsDeclined.WithLabelValues("idempotent_mismatch").Inc()
+			metrics.ReservationsDeclined.WithLabelValues("idempotent_replay").Inc()
 			return nil, fmt.Errorf("idempotent_mismatch")
 		}
 
@@ -317,7 +270,6 @@ func (s *ShowService) ReserveSeats(ctx context.Context, showID, userID, idempote
 	}
 
 	metrics.ReservationsHeld.Inc()
-	metrics.SeatsAvailable.WithLabelValues(showID).Sub(float64(len(req.Seats)))
 
 	return &ReserveResult{
 		ReservationID: resID.String(),
@@ -511,7 +463,6 @@ func (s *ShowService) CancelReservation(ctx context.Context, resID, userID strin
 		return fmt.Errorf("db_error")
 	}
 
-	metrics.SeatsAvailable.WithLabelValues(showID).Add(float64(canceledSeats))
 	return nil
 }
 
@@ -593,11 +544,6 @@ func (s *ShowService) reapExpiredHolds() {
 	}
 
 	totalExpired := 0
-	type freedData struct {
-		showID string
-		count  int
-	}
-	var freedList []freedData
 	for _, d := range expiredList {
 		var booked int
 		if err := tx.QueryRow(ctx, `
@@ -671,16 +617,12 @@ func (s *ShowService) reapExpiredHolds() {
 			return
 		}
 		totalExpired += count
-		freedList = append(freedList, freedData{showID: d.showID, count: count})
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		log.Printf("Reaper: commit failed: %v", err)
 	} else {
 		success = true
-		for _, d := range freedList {
-			metrics.SeatsAvailable.WithLabelValues(d.showID).Add(float64(d.count))
-		}
 		log.Printf("Reaper: successfully freed %d expired seats", totalExpired)
 	}
 }

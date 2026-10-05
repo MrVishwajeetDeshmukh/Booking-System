@@ -1,4 +1,4 @@
-CREATE TABLE shows (
+CREATE TABLE IF NOT EXISTS shows (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL,
     price_paise BIGINT NOT NULL CHECK (price_paise >= 0),
@@ -6,7 +6,7 @@ CREATE TABLE shows (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE seats (
+CREATE TABLE IF NOT EXISTS seats (
     show_id UUID NOT NULL REFERENCES shows(id),
     name TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('available', 'held', 'confirmed')),
@@ -16,7 +16,7 @@ CREATE TABLE seats (
     PRIMARY KEY (show_id, name)
 );
 
-CREATE TABLE idempotency_keys (
+CREATE TABLE IF NOT EXISTS idempotency_keys (
     key TEXT PRIMARY KEY,
     reservation_id UUID NOT NULL UNIQUE,
     show_id UUID NOT NULL REFERENCES shows(id),
@@ -26,11 +26,13 @@ CREATE TABLE idempotency_keys (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX seats_expired_holds_idx
+CREATE INDEX IF NOT EXISTS seats_expired_holds_idx
     ON seats (updated_at, show_id, user_id)
     WHERE status = 'held';
 
-CREATE TABLE user_show_limits (
+CREATE INDEX IF NOT EXISTS seats_show_status_idx ON seats (show_id, status);
+
+CREATE TABLE IF NOT EXISTS user_show_limits (
     show_id UUID NOT NULL REFERENCES shows(id),
     user_id TEXT NOT NULL,
     seats_booked INTEGER NOT NULL CHECK (seats_booked >= 0),

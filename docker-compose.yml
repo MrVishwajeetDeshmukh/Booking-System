@@ -20,6 +20,7 @@ services:
     build: .
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-development-only}@db:5432/bookings?sslmode=disable
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?Set AUTH_TOKEN_SECRET in .env}
       PORT: "8080"
     ports:
       - "8080:8080"

@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"bookingsystem/internal/auth"
 	"bookingsystem/internal/models"
 	"bookingsystem/internal/services"
 	"github.com/gofiber/fiber/v2"
@@ -63,9 +64,9 @@ func (c *ShowController) HandleGetShow(ctx *fiber.Ctx) error {
 
 func (c *ShowController) HandleReserve(ctx *fiber.Ctx) error {
 	showID := ctx.Params("id")
-	userID := ctx.Get("X-User-ID")
-	if userID == "" {
-		return ctx.Status(fiber.StatusUnauthorized).SendString("Missing X-User-ID")
+	userID, ok := ctx.Locals(auth.LocalUserIDKey).(string)
+	if !ok || userID == "" {
+		return ctx.Status(fiber.StatusUnauthorized).SendString("Missing bearer identity")
 	}
 
 	idempotencyKey := ctx.Get("Idempotency-Key")
@@ -110,9 +111,9 @@ func (c *ShowController) HandleReserve(ctx *fiber.Ctx) error {
 
 func (c *ShowController) HandleConfirm(ctx *fiber.Ctx) error {
 	resID := ctx.Params("id")
-	userID := ctx.Get("X-User-ID")
-	if userID == "" {
-		return ctx.Status(fiber.StatusUnauthorized).SendString("Missing X-User-ID")
+	userID, ok := ctx.Locals(auth.LocalUserIDKey).(string)
+	if !ok || userID == "" {
+		return ctx.Status(fiber.StatusUnauthorized).SendString("Missing bearer identity")
 	}
 
 	err := c.svc.ConfirmReservation(ctx.Context(), resID, userID)
@@ -130,9 +131,9 @@ func (c *ShowController) HandleConfirm(ctx *fiber.Ctx) error {
 
 func (c *ShowController) HandleCancel(ctx *fiber.Ctx) error {
 	resID := ctx.Params("id")
-	userID := ctx.Get("X-User-ID")
-	if userID == "" {
-		return ctx.Status(fiber.StatusUnauthorized).SendString("Missing X-User-ID")
+	userID, ok := ctx.Locals(auth.LocalUserIDKey).(string)
+	if !ok || userID == "" {
+		return ctx.Status(fiber.StatusUnauthorized).SendString("Missing bearer identity")
 	}
 
 	err := c.svc.CancelReservation(ctx.Context(), resID, userID)
