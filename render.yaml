@@ -6,7 +6,7 @@ services:
     region: singapore
     repo: https://github.com/MrVishwajeetDeshmukh/Booking-System.git
     branch: main
-    healthCheckPath: /readyz
+    healthCheckPath: /healthz
     buildCommand: go build -trimpath -ldflags="-s -w" -o server .
     startCommand: ./server
     envVars:

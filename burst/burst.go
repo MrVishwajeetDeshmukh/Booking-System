@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,7 +21,8 @@ import (
 
 var (
 	baseURL     = flag.String("url", "http://localhost:8080", "Base URL of the API")
-	concurrency = flag.Int("c", 20000, "Number of concurrent hot-seat requests")
+	concurrency = flag.Int("c", 20000, "Total number of hot-seat requests in the burst wave")
+	workers     = flag.Int("workers", 0, "Maximum hot-seat requests in flight (0 uses a platform default)")
 	userCount   = flag.Int("u", 5000, "Number of distinct bearer-token users in the hot-seat storm")
 	seatCount   = flag.Int("s", 10, "Number of seats to create on the test show")
 )
@@ -181,18 +183,28 @@ func createShow(client *http.Client, seats []string) (string, error) {
 	return reply.ID, nil
 }
 
-func runWave(client *http.Client, showID string, count int, requestFor func(int) (string, string, string)) []outcome {
+func runWave(client *http.Client, showID string, count, workerLimit int, requestFor func(int) (string, string, string)) []outcome {
 	results := make(chan outcome, count)
 	start := make(chan struct{})
-	var wg sync.WaitGroup
+	jobs := make(chan int, count)
 	for index := 0; index < count; index++ {
-		token, seat, key := requestFor(index)
+		jobs <- index
+	}
+	close(jobs)
+	if workerLimit > count {
+		workerLimit = count
+	}
+	var wg sync.WaitGroup
+	for worker := 0; worker < workerLimit; worker++ {
 		wg.Add(1)
-		go func(token, seat, key string) {
+		go func() {
 			defer wg.Done()
 			<-start
-			results <- reserve(client, showID, token, seat, key)
-		}(token, seat, key)
+			for index := range jobs {
+				token, seat, key := requestFor(index)
+				results <- reserve(client, showID, token, seat, key)
+			}
+		}()
 	}
 	close(start)
 	wg.Wait()
@@ -305,10 +317,22 @@ func main() {
 	if *concurrency < 1 || *userCount < 1 || *seatCount < 12 {
 		log.Fatal("concurrency and users must be positive; seats must be at least 12")
 	}
+	workerLimit := *workers
+	if workerLimit == 0 {
+		workerLimit = *concurrency
+		// Windows Go clients can exhaust OS threads with 20k simultaneous
+		// network waits; keep the default practical while allowing an override.
+		if runtime.GOOS == "windows" && workerLimit > 1024 {
+			workerLimit = 1024
+		}
+	}
+	if workerLimit < 1 {
+		log.Fatal("workers must be positive, or zero to use the platform default")
+	}
 	transport := &http.Transport{
-		MaxIdleConns:        *concurrency,
-		MaxIdleConnsPerHost: *concurrency,
-		MaxConnsPerHost:     *concurrency,
+		MaxIdleConns:        workerLimit,
+		MaxIdleConnsPerHost: workerLimit,
+		MaxConnsPerHost:     workerLimit,
 	}
 	client := &http.Client{Transport: transport, Timeout: 2 * time.Minute}
 	defer transport.CloseIdleConnections()
@@ -329,9 +353,9 @@ func main() {
 	}
 	fmt.Printf("Registered %d users for token-authenticated requests\n", len(tokens))
 
-	fmt.Printf("Storming hot seat A0 with %d concurrent requests from %d users...\n", *concurrency, *userCount)
+	fmt.Printf("Firing %d hot-seat requests for A0 (up to %d in flight, %d users)...\n", *concurrency, workerLimit, *userCount)
 	started := time.Now()
-	hotResults := runWave(client, showID, *concurrency, func(index int) (string, string, string) {
+	hotResults := runWave(client, showID, *concurrency, workerLimit, func(index int) (string, string, string) {
 		return tokens[index%*userCount], "A0", uuid.NewString()
 	})
 	fmt.Printf("Hot-seat storm finished in %s\n", time.Since(started).Round(time.Millisecond))
@@ -340,7 +364,7 @@ func main() {
 	const idempotencyRetries = 10
 	idempotencyToken := tokens[len(tokens)-2]
 	idempotencyKey := uuid.NewString()
-	replayResults := runWave(client, showID, idempotencyRetries, func(int) (string, string, string) {
+	replayResults := runWave(client, showID, idempotencyRetries, workerLimit, func(int) (string, string, string) {
 		return idempotencyToken, "A1", idempotencyKey
 	})
 	replayTotals := summarize("same-key same-body retries", replayResults)
@@ -355,7 +379,7 @@ func main() {
 	mismatchTotals := summarize("same-key different-body", []outcome{mismatchResult})
 
 	limitToken := tokens[len(tokens)-1]
-	limitResults := runWave(client, showID, 10, func(index int) (string, string, string) {
+	limitResults := runWave(client, showID, 10, workerLimit, func(index int) (string, string, string) {
 		seat := seats[2+(index%(len(seats)-2))]
 		return limitToken, seat, uuid.NewString()
 	})

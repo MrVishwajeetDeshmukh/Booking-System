@@ -22,7 +22,7 @@ A successful reservation starts in `held`. Its owner can confirm it within 15 mi
 
 ## Consistency under a partition
 
-PostgreSQL is the single source of truth; there is no inventory cache or write-behind path. If the service cannot reach PostgreSQL, readiness returns 503 and reservation writes cannot commit. The service gives up write availability rather than accepting decisions against stale inventory. The deployment expects one writable PostgreSQL primary and does not implement multi-region failover.
+PostgreSQL is the single source of truth; there is no inventory cache or write-behind path. If the service cannot reach PostgreSQL, `/readyz` returns 503 and reservation writes cannot commit. Render checks process liveness at `/healthz`, while `/readyz` remains the database readiness signal. The service gives up write availability rather than accepting decisions against stale inventory. The deployment expects one writable PostgreSQL primary and does not implement multi-region failover.
 
 ## Observability and paging
 
