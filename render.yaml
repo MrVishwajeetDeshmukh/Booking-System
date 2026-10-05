@@ -4,6 +4,8 @@ services:
     runtime: go
     plan: free
     region: singapore
+    repo: https://github.com/MrVishwajeetDeshmukh/Booking-System.git
+    branch: main
     healthCheckPath: /readyz
     buildCommand: go build -trimpath -ldflags="-s -w" -o server .
     startCommand: ./server
@@ -17,7 +19,10 @@ services:
 
 databases:
   - name: seat-booking-db
-    databaseName: bookings
-    user: bookings
+    databaseName: seat_booking_db_e8s2
+    user: seat_booking_db_e8s2_user
+    postgresMajorVersion: "15"
     plan: free
     region: singapore
+    ipAllowList: []
+    connectionPool: none
