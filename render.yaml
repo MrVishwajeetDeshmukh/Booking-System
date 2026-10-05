@@ -1,9 +1,11 @@
 services:
   - type: web
     name: seat-booking-api
-    runtime: docker
+    runtime: go
     plan: free
     healthCheckPath: /readyz
+    buildCommand: go build -trimpath -ldflags="-s -w" -o server .
+    startCommand: ./server
     envVars:
       - key: DATABASE_URL
         fromDatabase:

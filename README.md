@@ -24,7 +24,7 @@ Prometheus is at <http://localhost:9090>; the service scrape endpoint is <http:/
 
 ## Deploy to Render
 
-The checked-in `render.yaml` is a Render Blueprint for the Docker web service and PostgreSQL database. Push this repository to a public GitHub repo, then in Render choose **New → Blueprint**, connect that repo, and apply the Blueprint. Render generates `AUTH_TOKEN_SECRET` and connects `DATABASE_URL`; the service initializes the schema from `db/schema.sql` on startup. Once healthy, the public API URL is shown on the Render service page. Use that base URL for the burst script and the `/metrics` endpoint. Container logs are available in the service's Logs tab.
+The checked-in `render.yaml` is a Render Blueprint for the Go web service and PostgreSQL database. Push this repository to a public GitHub repo, then in Render choose **New → Blueprint**, connect that repo, and apply the Blueprint. Render generates `AUTH_TOKEN_SECRET` and connects `DATABASE_URL`; the service initializes the schema from `db/schema.sql` on startup. Once healthy, the public API URL is shown on the Render service page. Use that base URL for the burst script and the `/metrics` endpoint. Application logs are available in the service's Logs tab. Docker Compose remains available for local development.
 
 This Blueprint uses Render's free web and database plans for assignment review. Those plans have constraints: the web service spins down after 15 minutes idle and runs as one instance; the free database expires after 30 days and has no backups. Treat it as a short-lived review deployment, not production infrastructure. See [Render's free-plan limitations](https://render.com/docs/free).
 
