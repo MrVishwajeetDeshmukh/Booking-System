@@ -202,7 +202,7 @@ func (s *ShowService) ReserveSeats(ctx context.Context, showID, userID, idempote
 		FROM seats
 		WHERE show_id = $1 AND name = ANY($2) AND status = 'available'
 		ORDER BY name
-		FOR UPDATE
+		FOR UPDATE SKIP LOCKED
 	`, showID, req.Seats)
 	if err != nil {
 		log.Printf("DB error locking seats: %v", err)

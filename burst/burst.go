@@ -290,7 +290,7 @@ func availableSeatsMetric(client *http.Client, showID string) (int, error) {
 		return 0, err
 	}
 	if status != http.StatusOK {
-		return 0, fmt.Errorf("metrics returned HTTP %d", status)
+		return 0, fmt.Errorf("metrics returned HTTP %d: %s", status, strings.TrimSpace(string(body)))
 	}
 	wanted := fmt.Sprintf("seats_available{show_id=%q}", showID)
 	scanner := bufio.NewScanner(bytes.NewReader(body))
@@ -334,7 +334,7 @@ func main() {
 		MaxIdleConnsPerHost: workerLimit,
 		MaxConnsPerHost:     workerLimit,
 	}
-	client := &http.Client{Transport: transport, Timeout: 2 * time.Minute}
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Minute}
 	defer transport.CloseIdleConnections()
 
 	seats := make([]string, *seatCount)

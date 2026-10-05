@@ -93,7 +93,7 @@ func (c *ShowController) HandleReserve(ctx *fiber.Ctx) error {
 		case "limit_exceeded":
 			return ctx.Status(fiber.StatusConflict).SendString("Per-user limit exceeded")
 		case "seat_taken":
-			return ctx.Status(fiber.StatusConflict).SendString("Seat already taken or invalid")
+			return ctx.Status(fiber.StatusConflict).SendString("Seat already taken, temporarily locked, or invalid")
 		default:
 			return ctx.Status(fiber.StatusInternalServerError).SendString("DB error")
 		}

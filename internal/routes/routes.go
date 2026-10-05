@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"bookingsystem/internal/auth"
@@ -27,11 +28,16 @@ func SetupRoutes(app *fiber.App, db *pgxpool.Pool, tokenSecret []byte) error {
 
 	app.Use(func(c *fiber.Ctx) error {
 		started := time.Now()
+		// Capture request-backed values before handlers run and Fiber reuses its
+		// request buffers; Prometheus keeps label strings beyond this request.
+		method := strings.Clone(c.Method())
 		err := c.Next()
 		route := c.Route().Path
 		if route == "" {
 			route = "unmatched"
 		}
+		// Route patterns are stable, but clone defensively before retaining them.
+		route = strings.Clone(route)
 		status := c.Response().StatusCode()
 		if err != nil {
 			status = fiber.StatusInternalServerError
@@ -39,8 +45,8 @@ func SetupRoutes(app *fiber.App, db *pgxpool.Pool, tokenSecret []byte) error {
 				status = fiberErr.Code
 			}
 		}
-		metrics.HTTPRequests.WithLabelValues(c.Method(), route, strconv.Itoa(status)).Inc()
-		metrics.HTTPRequestDuration.WithLabelValues(c.Method(), route).Observe(time.Since(started).Seconds())
+		metrics.HTTPRequests.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
+		metrics.HTTPRequestDuration.WithLabelValues(method, route).Observe(time.Since(started).Seconds())
 		return err
 	})
 
